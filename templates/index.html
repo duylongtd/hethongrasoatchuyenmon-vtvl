@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Phần mềm Rà soát Chuyên môn Giờ làm việc & Bố trí Nhân sự VTVL</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background-color: #f8fafc; color: #0f172a; }
+    .main-tab-btn.active { border-bottom: 3px solid #1d4ed8; color: #1d4ed8; font-weight: 700; background-color: #eff6ff; }
+    .opt-btn.active { background-color: #1e293b; color: #ffffff; border-color: #1e293b; }
+    .badge-crit { background-color: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+    .badge-warn { background-color: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+    .badge-ok { background-color: #dcfce7; color: #166534; border: 1px solid #86efac; }
+    .badge-kn { background-color: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+  <!-- HEADER -->
+  <header class="bg-slate-900 text-white shadow-md sticky top-0 z-30">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center font-bold text-lg shadow">VTVL</div>
+        <div>
+          <h1 class="text-base md:text-lg font-bold tracking-tight">Hệ thống Rà soát Chuyên môn Giờ làm việc & Phân bổ Nhân sự VTVL</h1>
+          <p class="text-xs text-slate-300">Đối chiếu chuẩn 1.904 giờ/người/năm • Phát hiện thêm/bớt người bất hợp lý (B1–C3–D1–D2)</p>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <input id="filePathInput" type="text"
+          value=""
+          class="px-3 py-1.5 text-xs rounded bg-slate-800 border border-slate-600 text-slate-100 w-72 md:w-80 focus:outline-none focus:border-blue-400"
+          placeholder="Đường dẫn file Excel bộ biểu VTVL..." />
+        <button onclick="analyzeByPath()"
+          class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-xs font-semibold rounded shadow transition">
+          Phân tích đường dẫn
+        </button>
+        <label class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-xs font-semibold rounded shadow cursor-pointer transition">
+          Chọn file (.xlsx)
+          <input id="fileUploadInput" type="file" accept=".xlsx" class="hidden" onchange="uploadAndAnalyze(this)" />
+        </label>
+        <button onclick="downloadExcelReport()"
+          class="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-xs font-bold rounded shadow flex items-center gap-1.5 transition">
+          <span>⬇ Xuất Báo cáo Excel (.xlsx)</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- MAIN CONTENT -->
+  <main class="max-w-7xl mx-auto w-full px-4 py-5 flex-1 space-y-5">
+
+    <!-- STATUS BANNER -->
+    <div id="statusBanner" class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <div class="text-xs font-semibold uppercase tracking-wider text-blue-700">Hồ sơ đang rà soát</div>
+        <div id="currentFileLabel" class="text-base font-bold text-slate-900 mt-0.5">Đang tải dữ liệu...</div>
+      </div>
+      <div id="thresholdAlertBox" class="text-xs px-3.5 py-2 rounded-lg font-medium"></div>
+    </div>
+
+    <!-- 3 KPI CARDS (ĐÃ BỎ Ô "VỊ TRÍ BỎ TRỐNG 0 NGƯỜI" & BỔ SUNG BÁO ĐỎ NẾU VƯỢT TỔNG GIỜ D1) -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <!-- Card 1: Tổng giờ ròng & Quy đổi + Cảnh báo đỏ nếu vượt D1 -->
+      <div id="kpiHoursCard" class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm transition-all">
+        <div class="flex items-center justify-between gap-2">
+          <div id="kpiHoursTitle" class="text-xs text-slate-500 font-semibold">Tổng Giờ Ròng (B1/C3) & Quy đổi 1.904h</div>
+          <span id="kpiHoursAlertBadge" class="hidden px-2 py-0.5 rounded text-[11px] font-bold bg-red-600 text-white shadow-sm">
+            ⚠ VƯỢT QUỸ GIỜ D1
+          </span>
+        </div>
+        <div id="kpiHours" class="text-2xl font-extrabold text-slate-900 mt-1">--</div>
+        <div id="kpiFteSub" class="text-xs text-blue-700 font-semibold mt-1">--</div>
+        <div id="kpiD1CompareSub" class="text-xs mt-1.5 pt-1.5 border-t border-slate-100">--</div>
+      </div>
+
+      <!-- Card 2: Nhân sự Hiện có D1 -> Đề xuất C3 + Biên chế giao theo QĐ 2398/QĐ-UBND -->
+      <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
+        <div class="flex items-center justify-between gap-2">
+          <div class="text-xs text-slate-500 font-semibold">Nhân sự Hiện có (D1) → Đề xuất (C3)</div>
+          <span id="kpiQd434UnitBadge" class="hidden px-2 py-0.5 rounded text-[11px] font-bold bg-blue-100 text-blue-800 border border-blue-200"></span>
+        </div>
+        <div id="kpiHeadcount" class="text-2xl font-extrabold text-slate-900 mt-1">--</div>
+        <div id="kpiHeadcountSub" class="text-xs text-slate-600 mt-1">--</div>
+        <div id="kpiQd434Sub" class="text-xs mt-1.5 pt-1.5 border-t border-slate-100 text-slate-700">--</div>
+      </div>
+
+      <!-- Card 3: Tổng Phát hiện Bất thường -->
+      <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
+        <div class="text-xs text-slate-500 font-semibold">Tổng Phát hiện Bất thường Chuyên môn</div>
+        <div id="kpiFindings" class="text-2xl font-extrabold text-amber-600 mt-1">--</div>
+        <div id="kpiFindingsSub" class="text-xs text-slate-600 mt-1">--</div>
+      </div>
+    </div>
+
+    <!-- MAIN SECTION: CHỈ GIỮ LẠI 2 TAB CHÍNH -->
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+      <div class="flex flex-wrap border-b border-slate-200 bg-slate-50 text-sm">
+        <button class="main-tab-btn active px-5 py-3.5 transition" onclick="switchMainTab('tab-hours', this)">
+          1. Bất thường Giờ làm việc (So với 1.904h/người)
+        </button>
+        <button class="main-tab-btn px-5 py-3.5 transition" onclick="switchMainTab('tab-headcount', this)">
+          2. Bất hợp lý Thêm / Bớt người (Giờ ↔ D1 ↔ C3 ↔ D2)
+        </button>
+      </div>
+
+      <!-- MAIN TAB 1: BẤT THƯỜNG GIỜ LÀM VIỆC (VỊ TRÍ KIÊM NHIỆM = CẢNH BÁO VÀNG) -->
+      <div id="tab-hours" class="main-tab-panel p-5 space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 class="text-sm font-bold text-slate-800">Bảng Rà soát Giờ làm việc từng Vị trí việc làm (Chuẩn 1.904 giờ/người/năm)</h3>
+            <p class="text-xs text-slate-500">Các vị trí kiêm nhiệm được gắn cảnh báo vàng để rà soát phân công</p>
+          </div>
+          <select id="hoursFilter" onchange="renderHoursSection()" class="text-xs border border-slate-300 rounded px-2.5 py-1.5 bg-white">
+            <option value="ALL">Hiển thị tất cả vị trí</option>
+            <option value="WARNING_ONLY">Chỉ hiện vị trí có cảnh báo giờ làm việc</option>
+            <option value="NON_CONCURRENT">Ẩn các vị trí kiêm nhiệm</option>
+          </select>
+        </div>
+
+        <div class="overflow-x-auto border border-slate-200 rounded-lg">
+          <table class="min-w-full text-xs text-left">
+            <thead class="bg-slate-800 text-white">
+              <tr>
+                <th class="p-2.5">Mã VTVL</th>
+                <th class="p-2.5">Tên Vị trí việc làm</th>
+                <th class="p-2.5">Ban</th>
+                <th class="p-2.5 text-center">PP</th>
+                <th class="p-2.5 text-right">Tổng Giờ Ròng</th>
+                <th class="p-2.5 text-right">Định mức (FTE)</th>
+                <th class="p-2.5 text-center">Người D1</th>
+                <th class="p-2.5 text-center">Người C3</th>
+                <th class="p-2.5 text-right">Giờ/người D1 (%)</th>
+                <th class="p-2.5 text-right">Giờ/người C3 (%)</th>
+                <th class="p-2.5 text-center">Dòng B1 phút lẻ</th>
+                <th class="p-2.5">Đánh giá Giờ làm việc</th>
+              </tr>
+            </thead>
+            <tbody id="hoursTableBody" class="divide-y divide-slate-200 bg-white"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- MAIN TAB 2: BẤT HỢP LÝ THÊM / BỚT NGƯỜI -->
+      <div id="tab-headcount" class="main-tab-panel hidden p-5 space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 class="text-sm font-bold text-slate-800">Bảng Đối chiếu Đề xuất Thêm / Bớt người (Quy đổi Giờ ↔ Hiện có D1 ↔ Nhu cầu C3 ↔ Phương án D2)</h3>
+            <p class="text-xs text-slate-500">Chỉ rõ các vị trí tăng/giảm biên chế không khớp giờ làm việc hoặc mâu thuẫn số liệu tại biểu D2</p>
+          </div>
+          <select id="headcountFilter" onchange="renderHeadcountTable()" class="text-xs border border-slate-300 rounded px-2.5 py-1.5 bg-white">
+            <option value="ALL">Hiển thị tất cả VTVL</option>
+            <option value="ANOMALY">Chỉ hiện vị trí có bất thường</option>
+            <option value="ADD">Vị trí đề xuất TĂNG người (C3 &gt; D1)</option>
+            <option value="CUT">Vị trí đề xuất GIẢM người (C3 &lt; D1 hoặc giảm tại D2)</option>
+            <option value="ZERO">Vị trí bỏ trống 0 người (Kiêm nhiệm)</option>
+          </select>
+        </div>
+
+        <div class="overflow-x-auto border border-slate-200 rounded-lg">
+          <table class="min-w-full text-xs text-left">
+            <thead class="bg-slate-800 text-white">
+              <tr>
+                <th class="p-2.5">Mã VTVL</th>
+                <th class="p-2.5">Tên Vị trí việc làm</th>
+                <th class="p-2.5">Ban</th>
+                <th class="p-2.5 text-center">PP C3 (Gợi ý)</th>
+                <th class="p-2.5 text-right">Giờ Ròng</th>
+                <th class="p-2.5 text-right">Ngày làm việc quy đổi</th>
+                <th class="p-2.5 text-right">Người theo Giờ (FTE)</th>
+                <th class="p-2.5 text-center">Hiện có D1</th>
+                <th class="p-2.5 text-center">Đề xuất C3 (Cột J)</th>
+                <th class="p-2.5 text-center">Tăng/Giảm (C3-D1)</th>
+                <th class="p-2.5 text-center">D2 (Cột C / D / Thuyết minh H)</th>
+                <th class="p-2.5">Nhận xét & Cảnh báo Thêm/Bớt người</th>
+              </tr>
+            </thead>
+            <tbody id="headcountTableBody" class="divide-y divide-slate-200 bg-white"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- BOTTOM OPTIONAL SECTION: CÁC BUTTON TÙY CHỌN Ở DƯỚI CÙNG -->
+    <div class="bg-slate-100 rounded-xl border border-slate-300 p-4 space-y-4">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="text-xs font-bold uppercase tracking-wider text-slate-600">
+          Chức năng mở rộng (Optional - Bấm để mở/đóng)
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <button id="btn-opt-dept" onclick="toggleOptionalPanel('opt-dept', this)"
+            class="opt-btn px-3.5 py-2 text-xs font-semibold rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-200 shadow-sm transition">
+            📊 Cân đối giữa các Ban
+          </button>
+          <button id="btn-opt-findings" onclick="toggleOptionalPanel('opt-findings', this)"
+            class="opt-btn px-3.5 py-2 text-xs font-semibold rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-200 shadow-sm transition">
+            📋 Danh mục Cảnh báo theo Ô & Kiến nghị (<span id="tabFindingsCount">0</span>)
+          </button>
+          <button id="btn-opt-b1" onclick="toggleOptionalPanel('opt-b1', this)"
+            class="opt-btn px-3.5 py-2 text-xs font-semibold rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-200 shadow-sm transition">
+            ⏱ Công việc B1 Giờ lớn / Phút lẻ
+          </button>
+        </div>
+      </div>
+
+      <!-- OPTIONAL PANEL 1: CÂN ĐỐI GIỮA CÁC BAN -->
+      <div id="opt-dept" class="opt-panel hidden bg-white rounded-xl border border-slate-200 p-5 space-y-6">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div class="bg-slate-50 p-4 rounded-xl border border-slate-200">
+            <h3 class="text-sm font-bold text-slate-800 mb-1">Biểu đồ: Giờ làm việc bình quân / người giữa các Ban so với chuẩn 1.904h</h3>
+            <div class="h-64"><canvas id="deptLoadChart"></canvas></div>
+          </div>
+          <div class="bg-slate-50 p-4 rounded-xl border border-slate-200">
+            <h3 class="text-sm font-bold text-slate-800 mb-1">Biểu đồ: Tương quan Định mức Giờ (FTE) vs Nhân sự Hiện có (D1) vs Đề xuất (C3)</h3>
+            <div class="h-64"><canvas id="deptHeadcountChart"></canvas></div>
+          </div>
+        </div>
+
+        <div>
+          <h3 class="text-sm font-bold text-slate-800 mb-2">Bảng Ma trận Phân bổ Vị trí & Tải trọng giữa các Ban / Bộ phận</h3>
+          <div class="overflow-x-auto border border-slate-200 rounded-lg">
+            <table class="min-w-full text-xs text-left">
+              <thead class="bg-slate-800 text-white">
+                <tr>
+                  <th class="p-2.5">Ban / Bộ phận</th>
+                  <th class="p-2.5 text-center">Số VTVL</th>
+                  <th class="p-2.5 text-center">VTVL 0 người</th>
+                  <th class="p-2.5 text-right">Tổng Giờ Ròng</th>
+                  <th class="p-2.5 text-right">Tỷ trọng Giờ</th>
+                  <th class="p-2.5 text-right">Định mức (Giờ/1904)</th>
+                  <th class="p-2.5 text-center">Hiện có D1</th>
+                  <th class="p-2.5 text-center">Đề xuất C3</th>
+                  <th class="p-2.5 text-right">Giờ BQ / người D1</th>
+                  <th class="p-2.5 text-right">Giờ BQ / người C3</th>
+                  <th class="p-2.5 text-right">Giờ treo (0 người)</th>
+                  <th class="p-2.5">Đánh giá Cân đối Liên Ban</th>
+                </tr>
+              </thead>
+              <tbody id="deptTableBody" class="divide-y divide-slate-200 bg-white"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- OPTIONAL PANEL 2: DANH MỤC CẢNH BÁO THEO Ô & KIẾN NGHỊ -->
+      <div id="opt-findings" class="opt-panel hidden bg-white rounded-xl border border-slate-200 p-5 space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div class="flex flex-wrap items-center gap-2">
+            <select id="findingSevFilter" onchange="renderFindingsList()" class="text-xs border border-slate-300 rounded px-2.5 py-1.5 bg-white">
+              <option value="ALL">Mọi mức độ</option>
+              <option value="NGHIEM_TRONG">🔴 Nghiêm trọng</option>
+              <option value="CANH_BAO">🟡 Cảnh báo / Nghi vấn</option>
+            </select>
+            <select id="findingModFilter" onchange="renderFindingsList()" class="text-xs border border-slate-300 rounded px-2.5 py-1.5 bg-white">
+              <option value="ALL">Mọi nhóm nghiệp vụ</option>
+              <option value="1. Bất thường Giờ làm việc">1. Bất thường Giờ làm việc</option>
+              <option value="2. Bất hợp lý Thêm/Bớt người">2. Bất hợp lý Thêm/Bớt người</option>
+              <option value="3. Cân đối giữa các Ban">3. Cân đối giữa các Ban</option>
+            </select>
+            <input id="findingSearch" type="text" oninput="renderFindingsList()" placeholder="Tìm theo mã VTVL, tên vị trí, ô..."
+              class="text-xs border border-slate-300 rounded px-3 py-1.5 w-64" />
+          </div>
+          <div id="findingFilteredSummary" class="text-xs text-slate-600 font-semibold"></div>
+        </div>
+        <div id="findingsContainer" class="space-y-3"></div>
+      </div>
+
+      <!-- OPTIONAL PANEL 3: CÔNG VIỆC B1 GIỜ LỚN / PHÚT LẺ -->
+      <div id="opt-b1" class="opt-panel hidden bg-white rounded-xl border border-slate-200 p-5 space-y-4">
+        <div>
+          <h3 class="text-sm font-bold text-slate-800">Các dòng Công việc tại Biểu 3. B1_KhoiLuong có Thời gian/SP cao (≥ 480 phút/SP) hoặc Tổng giờ ≥ 1.000h/năm</h3>
+          <p class="text-xs text-slate-500">Giúp cán bộ rà soát truy ngược ngay dòng công việc nào làm đội giờ của vị trí việc làm</p>
+        </div>
+        <div class="overflow-x-auto border border-slate-200 rounded-lg">
+          <table class="min-w-full text-xs text-left">
+            <thead class="bg-slate-800 text-white">
+              <tr>
+                <th class="p-2.5">Ô tại B1</th>
+                <th class="p-2.5">Ban</th>
+                <th class="p-2.5">Mã VTVL</th>
+                <th class="p-2.5">Mã Công việc</th>
+                <th class="p-2.5">Tên Công việc (từ A2)</th>
+                <th class="p-2.5 text-right">Số SP/năm</th>
+                <th class="p-2.5 text-right">Phút/SP (Cột D)</th>
+                <th class="p-2.5 text-right">Tổng giờ (Cột G)</th>
+                <th class="p-2.5">Chi tiết</th>
+              </tr>
+            </thead>
+            <tbody id="b1TableBody" class="divide-y divide-slate-200 bg-white"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    let AUDIT_DATA = null;
+    let deptLoadChartInstance = null;
+    let deptHeadcountChartInstance = null;
+
+    function switchMainTab(tabId, btnEl) {
+      document.querySelectorAll('.main-tab-panel').forEach(el => el.classList.add('hidden'));
+      document.querySelectorAll('.main-tab-btn').forEach(el => el.classList.remove('active'));
+      document.getElementById(tabId).classList.remove('hidden');
+      btnEl.classList.add('active');
+    }
+
+    function toggleOptionalPanel(panelId, btnEl) {
+      const target = document.getElementById(panelId);
+      const isHidden = target.classList.contains('hidden');
+      document.querySelectorAll('.opt-panel').forEach(el => el.classList.add('hidden'));
+      document.querySelectorAll('.opt-btn').forEach(el => el.classList.remove('active'));
+      if (isHidden) {
+        target.classList.remove('hidden');
+        btnEl.classList.add('active');
+        if (panelId === 'opt-dept' && AUDIT_DATA) {
+          renderDeptCharts();
+        }
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    function fmtNum(val, digits = 1) {
+      if (val === null || val === undefined || isNaN(val)) return '-';
+      return Number(val).toLocaleString('vi-VN', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+    }
+
+    // Không tự động phân tích file mặc định khi mở trang: đường dẫn phụ thuộc máy (Windows/macOS),
+    // người dùng cần chọn file (.xlsx) hoặc nhập đường dẫn trên máy chạy server.
+    function loadInitialAudit() {
+      document.getElementById('currentFileLabel').textContent =
+        'Chưa có file — bấm "Chọn file (.xlsx)" để import bộ biểu VTVL, hoặc nhập đường dẫn file rồi bấm "Phân tích đường dẫn".';
+    }
+
+    async function analyzeByPath() {
+      const pathVal = document.getElementById('filePathInput').value.trim();
+      if (!pathVal) {
+        alert('Vui lòng nhập đường dẫn file Excel hoặc bấm "Chọn file (.xlsx)".');
+        return;
+      }
+      document.getElementById('currentFileLabel').textContent = 'Đang phân tích: ' + pathVal + ' ...';
+      try {
+        const res = await fetch('/api/audit-path', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file_path: pathVal })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Lỗi phân tích file');
+        AUDIT_DATA = data;
+        renderDashboard();
+      } catch (err) {
+        alert('Không thể đọc file: ' + err.message);
+      }
+    }
+
+    async function uploadAndAnalyze(inputEl) {
+      const file = inputEl.files[0];
+      if (!file) return;
+      document.getElementById('currentFileLabel').textContent = 'Đang tải lên và phân tích: ' + file.name + ' ...';
+      try {
+        const buf = await file.arrayBuffer();
+        const res = await fetch('/api/audit-upload?filename=' + encodeURIComponent(file.name), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: buf
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Lỗi tải file');
+        AUDIT_DATA = data;
+        document.getElementById('filePathInput').value = data.file_path;
+        renderDashboard();
+      } catch (err) {
+        alert('Lỗi tải file: ' + err.message);
+      } finally {
+        inputEl.value = '';  // cho phép chọn lại cùng một file
+      }
+    }
+
+    function downloadExcelReport() {
+      const pathVal = document.getElementById('filePathInput').value.trim();
+      if (!pathVal) {
+        alert('Chưa có file nào được phân tích. Hãy chọn file (.xlsx) trước khi xuất báo cáo.');
+        return;
+      }
+      window.location.href = '/api/export-excel?file_path=' + encodeURIComponent(pathVal);
+    }
+
+    function renderDashboard() {
+      if (!AUDIT_DATA) return;
+      const ut = AUDIT_DATA.unit_totals;
+      const ht = AUDIT_DATA.headcount_totals;
+      const st = AUDIT_DATA.stats;
+
+      document.getElementById('currentFileLabel').textContent =
+        `${AUDIT_DATA.file_name} (${ut.total_vtvl} vị trí việc làm • ${AUDIT_DATA.departments.length} Ban/Khối)`;
+
+      // Ngưỡng 10% alert
+      const alertBox = document.getElementById('thresholdAlertBox');
+      if (Math.abs(ht.diff_sh_sg_pct) > 10) {
+        alertBox.className = 'text-xs px-3.5 py-2 rounded-lg font-semibold badge-crit';
+        alertBox.innerHTML = `⚠ Vi phạm ngưỡng 10% C3: Tổng H (${ht.sum_col_h}) + Tổng G (${fmtNum(ht.sum_col_g, 2)}) = <b>${fmtNum(ht.sh_plus_sg, 2)}</b> người vs Tổng cột J (<b>${ht.sum_col_j}</b> người) → Lệch <b>+${fmtNum(ht.diff_sh_sg_pct, 1)}%</b>`;
+      } else {
+        alertBox.className = 'text-xs px-3.5 py-2 rounded-lg font-semibold badge-ok';
+        alertBox.innerHTML = `✓ Tổng H + Tổng G tại C3 nằm trong ngưỡng ±10% so với cột J (${fmtNum(ht.diff_sh_sg_pct, 1)}%)`;
+      }
+
+      // KPI 1: Tổng Giờ Ròng & Quy đổi + Cảnh báo đỏ nếu vượt D1
+      const kpiCard = document.getElementById('kpiHoursCard');
+      const kpiTitle = document.getElementById('kpiHoursTitle');
+      const kpiBadge = document.getElementById('kpiHoursAlertBadge');
+      const kpiHoursEl = document.getElementById('kpiHours');
+      const kpiFteSubEl = document.getElementById('kpiFteSub');
+      const kpiD1CompareEl = document.getElementById('kpiD1CompareSub');
+
+      kpiHoursEl.textContent = `${fmtNum(ut.total_hours, 1)} giờ (${fmtNum(ut.total_fte, 2)} người)`;
+      kpiFteSubEl.textContent = `Quỹ giờ nhân sự D1 hiện có: ${fmtNum(ut.total_d1_hours, 0)} giờ (${ut.total_d1} người × 1.904h)`;
+
+      if (ut.is_exceeding_d1) {
+        kpiCard.className = 'bg-rose-50 rounded-xl p-4 border-2 border-rose-500 shadow-sm transition-all';
+        kpiTitle.className = 'text-xs text-rose-800 font-bold';
+        kpiHoursEl.className = 'text-2xl font-extrabold text-rose-700 mt-1';
+        kpiBadge.classList.remove('hidden');
+        kpiD1CompareEl.className = 'text-xs font-bold text-rose-700 mt-1.5 pt-1.5 border-t border-rose-200';
+        kpiD1CompareEl.innerHTML = `🔴 Vượt <b>+${fmtNum(ut.exceed_d1_hours, 1)} giờ</b> (tương đương <b>+${fmtNum(ut.exceed_d1_fte, 2)} người</b>) so với nhân lực hiện có tại D1!`;
+      } else {
+        kpiCard.className = 'bg-white rounded-xl p-4 border border-slate-200 shadow-sm transition-all';
+        kpiTitle.className = 'text-xs text-slate-500 font-semibold';
+        kpiHoursEl.className = 'text-2xl font-extrabold text-slate-900 mt-1';
+        kpiBadge.classList.add('hidden');
+        kpiD1CompareEl.className = 'text-xs font-medium text-emerald-700 mt-1.5 pt-1.5 border-t border-slate-100';
+        kpiD1CompareEl.innerHTML = `✓ Nằm trong quỹ giờ nhân sự D1 hiện có (${fmtNum(ut.total_d1_hours, 0)} giờ)`;
+      }
+
+      // KPI 2: Nhân sự D1 -> C3 + Biên chế giao theo QĐ 434-QĐ/TU
+      const diffD1C3 = ut.total_c3 - ut.total_d1;
+      document.getElementById('kpiHeadcount').textContent = `${ut.total_d1} → ${ut.total_c3} người`;
+      document.getElementById('kpiHeadcountSub').textContent =
+        `Đề xuất ${diffD1C3 >= 0 ? 'tăng +' + diffD1C3 : 'giảm ' + diffD1C3} người so với D1 • BQ ${fmtNum(ut.avg_hours_per_d1, 0)}h/người D1`;
+
+      const qd = AUDIT_DATA.qd2398_info;
+      const qdBadge = document.getElementById('kpiQd434UnitBadge');
+      const qdSub = document.getElementById('kpiQd434Sub');
+      if (qd) {
+        qdBadge.textContent = `QĐ 2398 - PL${qd.phu_luc}: ${qd.ten}`;
+        qdBadge.title = `${qd.phu_luc_ten}\nNhận diện từ: ${qd.nguon_nhan_dien} ("${qd.chuoi_nhan_dien}")`;
+        qdBadge.classList.remove('hidden');
+        const soLieu = qd.so_lieu
+          .filter(x => x.nhan !== 'Tổng giao')
+          .map(x => `${escapeHtml(x.nhan)}: <b>${x.gia_tri}</b>`).join(' • ');
+        let html =
+          `📌 <b>Theo ${escapeHtml(qd.van_ban)} (Phụ lục ${qd.phu_luc}):</b> ` +
+          `Tổng giao: <b class="text-blue-700">${qd.tong_giao ?? '-'}</b>` + (soLieu ? ` • ${soLieu}` : '');
+        if (qd.don_vi_con && qd.don_vi_con.length) {
+          html += `<div class="text-slate-500 mt-0.5">Gồm: ` +
+            qd.don_vi_con.map(c => `${escapeHtml(c.ten)} (${c.tong_giao})`).join('; ') + `</div>`;
+        }
+        if (qd.lien_quan && qd.lien_quan.length) {
+          html += `<div class="text-slate-500 mt-0.5">Cùng địa bàn: ` +
+            qd.lien_quan.map(c => `${escapeHtml(c.ten)} [PL${c.phu_luc}]: ${c.tong_giao}`).join('; ') + `</div>`;
+        }
+        html += `<div class="text-[11px] text-slate-400 mt-0.5">Nhận diện từ: ${escapeHtml(qd.nguon_nhan_dien)} – "${escapeHtml(qd.chuoi_nhan_dien)}"</div>`;
+        qdSub.innerHTML = html;
+      } else {
+        qdBadge.classList.add('hidden');
+        const tried = AUDIT_DATA.co_quan_a1 ? ` (Cơ quan tại A1: "${escapeHtml(AUDIT_DATA.co_quan_a1)}")` : '';
+        qdSub.innerHTML = `<span class="text-slate-400">Chưa nhận diện được tên đơn vị theo Phụ lục QĐ 2398/QĐ-UBND${tried}</span>`;
+      }
+
+      // KPI 3: Phát hiện bất thường
+      document.getElementById('kpiFindings').textContent = `${st.total_findings} phát hiện`;
+      document.getElementById('kpiFindingsSub').textContent =
+        `🔴 ${st.critical_count} Nghiêm trọng • 🟡 ${st.warning_count} Cảnh báo chuyên môn`;
+      document.getElementById('tabFindingsCount').textContent = st.total_findings;
+
+      renderHoursSection();
+      renderHeadcountTable();
+      renderDeptTableOnly();
+      renderFindingsList();
+      renderB1Section();
+    }
+
+    function renderHoursSection() {
+      const filterVal = document.getElementById('hoursFilter').value;
+      const list = AUDIT_DATA.position_hour_evals.filter(p => {
+        if (filterVal === 'WARNING_ONLY') return p.severity !== 'HOP_LY';
+        if (filterVal === 'NON_CONCURRENT') return !p.is_kiem_nhiem;
+        return true;
+      });
+
+      const tbody = document.getElementById('hoursTableBody');
+      tbody.innerHTML = list.map(p => {
+        const d1Str = p.gio_tren_nguoi_d1 !== null ? `${fmtNum(p.gio_tren_nguoi_d1, 0)}h (${fmtNum(p.ty_le_d1_pct, 0)}%)` : '0 người D1';
+        const c3Str = p.gio_tren_nguoi_c3 !== null ? `${fmtNum(p.gio_tren_nguoi_c3, 0)}h (${fmtNum(p.ty_le_c3_pct, 0)}%)` : 'Kiêm nhiệm';
+
+        let evalHtml = '';
+        if (p.flags && p.flags.length > 0) {
+          const badgeCls = p.severity === 'NGHIEM_TRONG' ? 'badge-crit' : 'badge-warn';
+          evalHtml = p.flags.map(f => `<span class="inline-block px-2 py-0.5 rounded text-[11px] font-medium mr-1 mb-1 ${badgeCls}">${f}</span>`).join('');
+        } else {
+          evalHtml = `<span class="badge-ok px-2 py-0.5 rounded text-[11px]">Bình thường</span>`;
+        }
+
+        return `<tr class="hover:bg-slate-50 ${p.is_kiem_nhiem ? 'bg-amber-50/40' : ''}">
+          <td class="p-2.5 font-mono font-bold text-slate-800">${p.ma_vtvl}</td>
+          <td class="p-2.5 font-medium text-slate-900">${p.ten_vtvl}</td>
+          <td class="p-2.5 text-slate-600">${p.dept_name}</td>
+          <td class="p-2.5 text-center font-semibold">${p.phuong_phap}</td>
+          <td class="p-2.5 text-right font-bold">${fmtNum(p.gio_rong, 1)}h</td>
+          <td class="p-2.5 text-right font-bold text-blue-700">${fmtNum(p.fte_theo_gio, 2)}</td>
+          <td class="p-2.5 text-center">${p.n_d1}</td>
+          <td class="p-2.5 text-center font-bold">${p.n_c3}</td>
+          <td class="p-2.5 text-right">${d1Str}</td>
+          <td class="p-2.5 text-right">${c3Str}</td>
+          <td class="p-2.5 text-center ${!p.is_kiem_nhiem && p.so_dong_phut_le > 0 ? 'text-amber-700 font-bold' : 'text-slate-400'}">${p.so_dong_phut_le}/${p.so_cong_viec_b1}</td>
+          <td class="p-2.5">${evalHtml}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    function renderHeadcountTable() {
+      const filter = document.getElementById('headcountFilter').value;
+      const list = AUDIT_DATA.headcount_comparisons.filter(c => {
+        if (filter === 'ANOMALY') return c.severity !== 'HOP_LY';
+        if (filter === 'ADD') return c.delta_c3_vs_d1 > 0;
+        if (filter === 'CUT') return c.delta_c3_vs_d1 < 0 || c.d2_reduce_flag;
+        if (filter === 'ZERO') return c.n_c3 === 0;
+        return true;
+      });
+
+      const tbody = document.getElementById('headcountTableBody');
+      tbody.innerHTML = list.map(c => {
+        const badgeCls = c.severity === 'NGHIEM_TRONG' ? 'badge-crit' : (c.severity === 'CANH_BAO' ? 'badge-warn' : 'badge-ok');
+        const deltaStr = c.delta_c3_vs_d1 > 0 ? `+${c.delta_c3_vs_d1}` : `${c.delta_c3_vs_d1}`;
+        const deltaColor = c.delta_c3_vs_d1 > 0 ? 'text-blue-700 font-bold' : (c.delta_c3_vs_d1 < 0 ? 'text-rose-600 font-bold' : 'text-slate-400');
+        const ngayQuyDoi = c.ngay_lam_viec_quy_doi !== undefined ? c.ngay_lam_viec_quy_doi : (c.gio_rong / 8.0);
+        const d2Info = `C:${c.n_d2_col_c ?? '-'} | D:${c.n_d2_col_d ?? '-'} | H:[${c.d2_narrative_nums.join(',') || '-'}]`;
+
+        return `<tr class="hover:bg-slate-50">
+          <td class="p-2.5 font-mono font-bold text-slate-800">${c.ma_vtvl}</td>
+          <td class="p-2.5 font-medium text-slate-900">${c.ten_vtvl}</td>
+          <td class="p-2.5 text-slate-600">${c.dept_name}</td>
+          <td class="p-2.5 text-center"><span class="font-bold">${c.phuong_phap}</span> <div class="text-[10px] text-slate-400">(${c.suggested_method})</div></td>
+          <td class="p-2.5 text-right font-semibold">${fmtNum(c.gio_rong, 1)}h</td>
+          <td class="p-2.5 text-right font-semibold text-indigo-700">${fmtNum(ngayQuyDoi, 1)} ngày</td>
+          <td class="p-2.5 text-right font-bold text-blue-700">${fmtNum(c.fte_theo_gio, 2)}</td>
+          <td class="p-2.5 text-center font-bold">${c.n_d1}</td>
+          <td class="p-2.5 text-center font-extrabold ${c.n_c3 === 0 ? 'text-rose-600' : 'text-slate-900'}">${c.n_c3}</td>
+          <td class="p-2.5 text-center ${deltaColor}">${deltaStr}</td>
+          <td class="p-2.5 text-center font-mono text-[11px] ${c.d2_mismatch_flag || c.d2_reduce_flag ? 'text-rose-600 font-bold' : ''}">${d2Info}</td>
+          <td class="p-2.5">
+            ${c.issues.length ? c.issues.map(iss => `<div class="px-2 py-1 rounded text-[11px] mb-1 ${badgeCls}">${iss}</div>`).join('') : '<span class="badge-ok px-2 py-0.5 rounded text-[11px]">Khớp hợp lý</span>'}
+          </td>
+        </tr>`;
+      }).join('');
+    }
+
+    function renderDeptTableOnly() {
+      const depts = AUDIT_DATA.departments;
+      const tbody = document.getElementById('deptTableBody');
+      tbody.innerHTML = depts.map(d => {
+        const badgeCls = d.severity === 'NGHIEM_TRONG' ? 'badge-crit' : (d.severity === 'CANH_BAO' ? 'badge-warn' : 'badge-ok');
+        return `<tr class="hover:bg-slate-50">
+          <td class="p-2.5 font-bold text-slate-900">${d.dept_name} <span class="text-slate-400 font-normal">(${d.dept_code})</span></td>
+          <td class="p-2.5 text-center font-semibold">${d.so_vtvl}</td>
+          <td class="p-2.5 text-center font-bold ${d.so_vtvl_0_nguoi_c3 > 0 ? 'text-rose-600' : 'text-slate-400'}">${d.so_vtvl_0_nguoi_c3}</td>
+          <td class="p-2.5 text-right font-semibold">${fmtNum(d.tong_gio_rong, 1)}h</td>
+          <td class="p-2.5 text-right text-slate-600">${fmtNum(d.ty_trong_gio_pct, 1)}%</td>
+          <td class="p-2.5 text-right font-bold text-blue-700">${fmtNum(d.fte_theo_gio, 2)}</td>
+          <td class="p-2.5 text-center font-semibold">${d.n_d1}</td>
+          <td class="p-2.5 text-center font-bold">${d.n_c3}</td>
+          <td class="p-2.5 text-right font-semibold ${d.ty_le_tai_d1_pct > 112 ? 'text-rose-600' : (d.ty_le_tai_d1_pct < 80 ? 'text-amber-700' : 'text-emerald-700')}">
+            ${fmtNum(d.gio_bq_d1, 0)}h (${fmtNum(d.ty_le_tai_d1_pct, 0)}%)
+          </td>
+          <td class="p-2.5 text-right font-semibold">${fmtNum(d.gio_bq_c3, 0)}h (${fmtNum(d.ty_le_tai_c3_pct, 0)}%)</td>
+          <td class="p-2.5 text-right ${d.gio_treo_0_nguoi > 0 ? 'text-rose-600 font-semibold' : 'text-slate-400'}">${fmtNum(d.gio_treo_0_nguoi, 0)}h</td>
+          <td class="p-2.5">
+            <span class="inline-block px-2 py-0.5 rounded text-[11px] font-semibold ${badgeCls}">${d.status_label}</span>
+            <div class="text-[11px] text-slate-600 mt-1">${d.notes.join(' ')}</div>
+          </td>
+        </tr>`;
+      }).join('');
+    }
+
+    function renderDeptCharts() {
+      const depts = AUDIT_DATA.departments;
+      const labels = depts.map(d => d.dept_name);
+      if (deptLoadChartInstance) deptLoadChartInstance.destroy();
+      deptLoadChartInstance = new Chart(document.getElementById('deptLoadChart'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            { label: 'Giờ BQ / người hiện có (D1)', data: depts.map(d => Math.round(d.gio_bq_d1)), backgroundColor: '#ef4444' },
+            { label: 'Giờ BQ / người đề xuất (C3)', data: depts.map(d => Math.round(d.gio_bq_c3)), backgroundColor: '#3b82f6' },
+            { label: 'Chuẩn định mức (1.904h)', data: depts.map(() => 1904), type: 'line', borderColor: '#10b981', borderWidth: 2, pointRadius: 3 }
+          ]
+        },
+        options: { responsive: true, maintainAspectRatio: false }
+      });
+
+      if (deptHeadcountChartInstance) deptHeadcountChartInstance.destroy();
+      deptHeadcountChartInstance = new Chart(document.getElementById('deptHeadcountChart'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            { label: 'Định mức theo giờ (Giờ / 1.904)', data: depts.map(d => Number(d.fte_theo_gio.toFixed(2))), backgroundColor: '#6366f1' },
+            { label: 'Nhân sự hiện có (D1)', data: depts.map(d => d.n_d1), backgroundColor: '#f59e0b' },
+            { label: 'Đề xuất bố trí (C3)', data: depts.map(d => d.n_c3), backgroundColor: '#10b981' }
+          ]
+        },
+        options: { responsive: true, maintainAspectRatio: false }
+      });
+    }
+
+    function renderFindingsList() {
+      const sev = document.getElementById('findingSevFilter').value;
+      const mod = document.getElementById('findingModFilter').value;
+      const q = document.getElementById('findingSearch').value.trim().toLowerCase();
+
+      const filtered = AUDIT_DATA.all_findings.filter(f => {
+        if (sev !== 'ALL' && f.severity !== sev) return false;
+        if (mod !== 'ALL' && f.module !== mod) return false;
+        if (q) {
+          const hay = `${f.ma_vtvl} ${f.ten_vtvl} ${f.dept_name} ${f.category} ${f.detail} ${f.cell_ref}`.toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      });
+
+      document.getElementById('findingFilteredSummary').textContent = `Hiển thị ${filtered.length} / ${AUDIT_DATA.all_findings.length} cảnh báo`;
+      const container = document.getElementById('findingsContainer');
+      container.innerHTML = filtered.map(f => {
+        const isCrit = f.severity === 'NGHIEM_TRONG';
+        const badge = isCrit ? '🔴 NGHIÊM TRỌNG' : '🟡 CẢNH BÁO';
+        const borderCls = isCrit ? 'border-l-4 border-l-rose-600 bg-rose-50/30' : 'border-l-4 border-l-amber-500 bg-amber-50/30';
+        return `<div class="p-3.5 rounded-lg border border-slate-200 ${borderCls} space-y-1.5">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="flex items-center gap-2">
+              <span class="px-2 py-0.5 rounded text-[11px] font-bold ${isCrit ? 'badge-crit' : 'badge-warn'}">${badge}</span>
+              <span class="text-xs font-semibold text-blue-800 bg-blue-50 px-2 py-0.5 rounded">${f.module}</span>
+              <span class="text-xs font-bold text-slate-900">${f.category}</span>
+            </div>
+            <span class="text-xs font-mono bg-slate-800 text-white px-2 py-0.5 rounded">${f.cell_ref}</span>
+          </div>
+          <div class="text-xs text-slate-800">
+            <b>Đơn vị / Vị trí:</b> ${f.dept_name} — <span class="font-mono font-bold">${f.ma_vtvl}</span> (${f.ten_vtvl})
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs bg-white p-2 rounded border border-slate-200">
+            <div><span class="text-slate-500">Giá trị hiện tại:</span> <b class="text-rose-700">${f.current_value}</b></div>
+            <div><span class="text-slate-500">Chuẩn đối chiếu:</span> <b class="text-emerald-700">${f.benchmark}</b></div>
+          </div>
+          <div class="text-xs text-slate-700"><b>Phân tích:</b> ${f.detail}</div>
+          <div class="text-xs text-blue-900 bg-blue-50/80 p-2 rounded"><b>💡 Kiến nghị xử lý:</b> ${f.recommendation}</div>
+        </div>`;
+      }).join('');
+    }
+
+    function renderB1Section() {
+      const list = AUDIT_DATA.b1_anomalies;
+      const tbody = document.getElementById('b1TableBody');
+      tbody.innerHTML = list.map(b => `<tr class="hover:bg-slate-50">
+        <td class="p-2.5 font-mono font-bold text-blue-700">B1!D${b.row}, G${b.row}</td>
+        <td class="p-2.5 text-slate-600">${b.dept_name}</td>
+        <td class="p-2.5 font-mono font-bold">${b.ma_vtvl}</td>
+        <td class="p-2.5 font-mono">${b.ma_cv}</td>
+        <td class="p-2.5 max-w-md">${b.ten_cv}</td>
+        <td class="p-2.5 text-right font-semibold">${b.so_sp}</td>
+        <td class="p-2.5 text-right font-bold text-rose-600">${fmtNum(b.phut_do, 2)} phút</td>
+        <td class="p-2.5 text-right font-bold text-blue-800">${fmtNum(b.gio_tong, 1)}h</td>
+        <td class="p-2.5 text-slate-600">${b.detail}</td>
+      </tr>`).join('');
+    }
+
+    window.addEventListener('DOMContentLoaded', loadInitialAudit);
+  </script>
+</body>
+</html>

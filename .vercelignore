@@ -1,0 +1,8 @@
+.venv
+uploads
+ket_qua_ra_soat
+data
+scripts
+requirements-dev.txt
+run_audit_cli.py
+*.xlsx

@@ -1,0 +1,17 @@
+# Môi trường Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Dữ liệu làm việc của đơn vị: KHÔNG đưa lên repo
+uploads/
+ket_qua_ra_soat/
+*.xlsx
+!templates/**/*.xlsx
+
+# Hệ điều hành / công cụ
+.DS_Store
+.vercel/
+.env
+.env.*
