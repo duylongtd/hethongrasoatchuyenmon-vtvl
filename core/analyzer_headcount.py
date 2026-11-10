@@ -25,6 +25,9 @@ def analyze_headcount_proposals(data: Dict[str, Any]) -> Dict[str, Any]:
     sh_plus_sg = sum_col_h + sum_col_g
     diff_sh_sg_pct = ((sh_plus_sg - sum_col_j) / sum_col_j * 100.0) if sum_col_j > 0 else 0.0
 
+    c3_rows = [p["c3_row"] for p in positions if p.get("c3_row")]
+    c3_range_ref = f"8. C3_NhuCau!G{min(c3_rows)}:J{max(c3_rows)}" if c3_rows else "8. C3_NhuCau (cột G, H, J)"
+
     # Kiểm tra ngưỡng 10% toàn biểu C3 (SH + SG so với TJ)
     if sum_col_j > 0 and abs(diff_sh_sg_pct) > 10.0:
         findings.append({
@@ -33,7 +36,7 @@ def analyze_headcount_proposals(data: Dict[str, Any]) -> Dict[str, Any]:
             "dept_name": "Toàn đơn vị",
             "ma_vtvl": "TOÀN_ĐƠN_VỊ",
             "ten_vtvl": "Tổng hợp biểu 8. C3_NhuCau",
-            "cell_ref": "8. C3_NhuCau!G3:J27",
+            "cell_ref": c3_range_ref,
             "current_value": f"SH ({sum_col_h:g}) + SG ({sum_col_g:.2f}) = {sh_plus_sg:.2f} người vs Cột J (TJ) = {sum_col_j:g} người (Lệch {diff_sh_sg_pct:+.1f}%)",
             "benchmark": f"|SH + SG - TJ| <= 10% × TJ (tức trong khoảng {0.9*sum_col_j:.1f} đến {1.1*sum_col_j:.1f} người)",
             "detail": (
@@ -169,8 +172,9 @@ def analyze_headcount_proposals(data: Dict[str, Any]) -> Dict[str, Any]:
                 "current_value": f"Giờ ròng = {gio_rong:,.1f}h ({fte:.2f} người) nhưng bố trí C3 = 0 người (D1 = {n_d1} người)",
                 "benchmark": "Vị trí có giờ làm việc phải có người đảm nhận hoặc cộng giờ kiêm nhiệm vào vị trí nhận kiêm nhiệm",
                 "detail": (
-                    f"Vị trí '{name}' có {gio_rong:,.1f} giờ/năm nhưng bị làm tròn xuống 0 người theo thuật toán 'phần dư lớn nhất' để ép tổng đơn vị đúng 30 người. "
-                    f"Khối lượng {gio_rong:,.1f}h này bị treo không có nhân sự tại D1 và D2."
+                    f"Vị trí '{name}' có {gio_rong:,.1f} giờ/năm ({fte:.2f} định mức) nhưng biểu C3 bố trí 0 người"
+                    + (f" (giải trình C3: '{giai_trinh_c3[:150]}')" if giai_trinh_c3 else "")
+                    + f". Khối lượng này chưa có người chuyên trách; hiện D1 có {n_d1} người gắn mã vị trí này."
                 ),
                 "recommendation": "Gộp công việc sang vị trí kiêm nhiệm thực tế hoặc xác định rõ nhân sự nào tại D1 gánh phần giờ này (cột E, F của D1).",
             })
@@ -178,7 +182,8 @@ def analyze_headcount_proposals(data: Dict[str, Any]) -> Dict[str, Any]:
         # 4. Đề xuất giảm người tại thuyết minh D2 trái ngược với giờ làm việc (ví dụ XDĐ_CV02)
         if d2_reduce_mentions:
             severity = "NGHIEM_TRONG"
-            load_if_reduced = gio_rong / max(1.0, (n_c3 - 1))
+            n_sau_giam = max(1.0, (n_c3 - 1))
+            load_if_reduced = gio_rong / n_sau_giam
             issues.append(f"Thuyết minh D2 đề xuất giảm người dù giờ ròng = {gio_rong:,.1f}h ({fte:.2f} định mức)")
             findings.append({
                 "severity": "NGHIEM_TRONG",
@@ -187,12 +192,12 @@ def analyze_headcount_proposals(data: Dict[str, Any]) -> Dict[str, Any]:
                 "ma_vtvl": code,
                 "ten_vtvl": name,
                 "cell_ref": f"10. D2_PhuongAn (các dòng của {code})",
-                "current_value": f"Giờ ròng = {gio_rong:,.1f}h ({fte:.2f} định mức) | Thuyết minh D2 đề xuất giảm còn 1 người",
-                "benchmark": f"1.904 giờ/người/năm (Nếu giảm còn 1 người sẽ vọt lên {load_if_reduced:,.1f}h/người = {load_if_reduced/gio_chuan*100:.1f}% định mức!)",
+                "current_value": f"Giờ ròng = {gio_rong:,.1f}h ({fte:.2f} định mức) | C3 bố trí {n_c3:g} người | Thuyết minh D2 có đề xuất giảm người",
+                "benchmark": f"{gio_chuan:,.0f} giờ/người/năm (nếu giảm 1 người, còn {n_sau_giam:g} người thì bình quân {load_if_reduced:,.1f}h/người = {load_if_reduced/gio_chuan*100:.1f}% định mức)",
                 "detail": (
-                    f"Vị trí '{name}' có khối lượng giờ lên tới {gio_rong:,.1f}h/năm (đủ tải 100% cho 2 người). "
+                    f"Vị trí '{name}' có khối lượng {gio_rong:,.1f}h/năm (tương đương {fte:.2f} người theo định mức). "
                     f"Tuy nhiên tại biểu D2 lại ghi: {' | '.join(d2_reduce_mentions[:2])}. "
-                    f"Nếu giảm xuống 1 người thì người còn lại phải gánh {load_if_reduced:,.1f}h/năm (gấp đôi định mức chuẩn)."
+                    f"Nếu giảm còn {n_sau_giam:g} người thì mỗi người phải gánh {load_if_reduced:,.1f}h/năm ({load_if_reduced/gio_chuan*100:.0f}% định mức chuẩn)."
                 ),
                 "recommendation": "Bỏ đề xuất giảm người tại thuyết minh D2 hoặc phải cắt giảm/chuyển giao bớt đầu việc tại B1 tương ứng trước khi giảm biên chế.",
             })

@@ -15,6 +15,7 @@ def analyze_department_balance(data: Dict[str, Any]) -> Dict[str, Any]:
     total_unit_hours = sum(p["gio_rong"] for p in positions)
     total_unit_d1 = sum(p["n_d1"] for p in positions)
     total_unit_c3 = sum(p["n_c3"] for p in positions)
+    unit_avg_d1 = (total_unit_hours / total_unit_d1) if total_unit_d1 > 0 else 0.0
 
     for pos in positions:
         d_code = pos["dept_code"]
@@ -100,7 +101,10 @@ def analyze_department_balance(data: Dict[str, Any]) -> Dict[str, Any]:
                     f"Tổng giờ: {gio:,.1f}h ({fte:.2f} định mức) | Nhân sự D1: {n_d1} người "
                     f"-> Bình quân {gio_bq_d1:,.0f}h/người ({ty_le_tai_d1_pct:.1f}% chuẩn 1.904h)"
                 ),
-                "benchmark": "Tải trọng bình quân ban nằm trong ngưỡng 85% - 110% (1.618h - 2.094h/người)",
+                "benchmark": (
+                    f"Tải bình quân bộ phận hợp lý trong khoảng 80% - 112% chuẩn 1.904h "
+                    f"({0.80*std_hours:,.0f}h - {1.12*std_hours:,.0f}h/người); trên 125% ({1.25*std_hours:,.0f}h/người) là nghiêm trọng"
+                ),
                 "detail": (
                     f"{b['dept_name']} hiện gánh {gio:,.1f} giờ công việc ({ty_trong_gio_pct:.1f}% toàn đơn vị, tương đương {fte:.2f} người), "
                     f"nhưng tại biểu D1 chỉ có {n_d1} người ({ty_trong_d1_pct:.1f}% nhân sự), dẫn tới bình quân mỗi người phải làm "
@@ -130,11 +134,16 @@ def analyze_department_balance(data: Dict[str, Any]) -> Dict[str, Any]:
                     f"Tổng giờ: {gio:,.1f}h ({fte:.2f} định mức) | Bố trí D1={n_d1}, C3={n_c3:g} người "
                     f"-> Bình quân {gio_bq_c3:,.0f}h/người ({ty_le_tai_c3_pct:.1f}% chuẩn 1.904h)"
                 ),
-                "benchmark": "Tải trọng bình quân ban nằm trong ngưỡng 85% - 110% (1.618h - 2.094h/người)",
+                "benchmark": (
+                    f"Tải bình quân bộ phận hợp lý trong khoảng 80% - 112% chuẩn 1.904h "
+                    f"({0.80*std_hours:,.0f}h - {1.12*std_hours:,.0f}h/người); trên 125% ({1.25*std_hours:,.0f}h/người) là nghiêm trọng"
+                ),
                 "detail": (
                     f"{b['dept_name']} có tổng giờ kê khai là {gio:,.1f}h (tương đương {fte:.2f} định mức 1.904h), "
                     f"nhưng bố trí {n_c3:g} người (chiếm {ty_trong_c3_pct:.1f}% biên chế toàn đơn vị trong khi chỉ chiếm {ty_trong_gio_pct:.1f}% khối lượng giờ). "
-                    f"So với Ban Xây dựng Đảng ({2650:,.0f}h/người D1) hay MTTQ ({2261:,.0f}h/người D1), tải trọng giờ của bộ phận này thấp hơn đáng kể."
+                    + (f"Bình quân toàn đơn vị là {unit_avg_d1:,.0f}h/người D1 ({unit_avg_d1/std_hours*100:.1f}% chuẩn); "
+                     f"tải của bộ phận này là {gio_bq_d1:,.0f}h/người D1 ({ty_le_tai_d1_pct:.1f}%)."
+                     if unit_avg_d1 > 0 else "")
                 ),
                 "recommendation": (
                     "Rà soát xem bộ phận có kê khai sót đầu việc chỉ đạo/tham mưu tại biểu B1 không, hoặc cân đối lại việc phân công kiêm nhiệm giữa các ban."
