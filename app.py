@@ -12,8 +12,11 @@ Deploy Vercel: Vercel tự nhận biến `app` (FastAPI) trong app.py.
     trừ khi đặt biến môi trường ALLOW_LOCAL_PATHS=1 (chỉ dùng khi chạy trên máy cá nhân).
 """
 
+import json
 import os
+import zlib
 from pathlib import Path
+from typing import Any, Dict
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -84,6 +87,58 @@ async def audit_upload(request: Request, filename: str = Query("uploaded_vtvl.xl
         saved_path.write_bytes(body)
         result = run_full_audit(str(saved_path))
         return JSONResponse(content=result)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+MAX_PAYLOAD_BYTES = 120 * 1024 * 1024  # giới hạn sau giải nén (chống "bom nén")
+
+
+async def _read_sheets_payload(request: Request) -> Dict[str, Any]:
+    """Đọc dữ liệu sheet do trình duyệt trích từ file Excel (JSON, có thể nén gzip)."""
+    body = await request.body()
+    if body[:2] == b"\x1f\x8b":
+        d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        body = d.decompress(body, MAX_PAYLOAD_BYTES)
+        if d.unconsumed_tail:
+            raise HTTPException(status_code=413, detail="Dữ liệu sau giải nén vượt giới hạn cho phép.")
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise HTTPException(status_code=400, detail="Dữ liệu gửi lên không phải JSON hợp lệ.")
+    if not isinstance(payload, dict) or not isinstance(payload.get("sheets"), dict):
+        raise HTTPException(status_code=400, detail="Dữ liệu gửi lên thiếu phần 'sheets'.")
+    return payload
+
+
+def _payload_file_name(payload: Dict[str, Any]) -> str:
+    return Path(str(payload.get("file_name") or "bo_bieu_vtvl.xlsx")).name
+
+
+@app.post("/api/audit-sheets")
+async def audit_sheets(request: Request):
+    """Phân tích từ dữ liệu sheet trích trên trình duyệt (không gửi cả file -> chạy được trên Vercel)."""
+    payload = await _read_sheets_payload(request)
+    try:
+        result = run_full_audit(_payload_file_name(payload), payload)
+        return JSONResponse(content=result)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/export-excel-sheets")
+async def export_excel_sheets(request: Request):
+    payload = await _read_sheets_payload(request)
+    file_name = _payload_file_name(payload)
+    try:
+        result = run_full_audit(file_name, payload)
+        out_file = EXPORT_DIR / f"Bao_cao_Ra_soat_Chuyen_mon_Gio_VTVL_{Path(file_name).stem}.xlsx"
+        build_excel_audit_report(result, str(out_file))
+        return FileResponse(
+            path=str(out_file),
+            filename=out_file.name,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

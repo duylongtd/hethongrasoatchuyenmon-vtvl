@@ -38,15 +38,88 @@ def _to_str(val: Any) -> str:
     return str(val).strip()
 
 
-def load_vtvl_workbook(file_path: str) -> Dict[str, Any]:
+# ---------------------------------------------------------------------------
+# Dữ liệu sheet trích sẵn từ trình duyệt (dùng khi deploy Vercel: không gửi cả file .xlsx
+# vì vượt giới hạn 4,5 MB của request). Định dạng payload:
+#   {"file_name": "...", "sheet_names": [...tất cả sheet...],
+#    "sheets": {"6. C1_VTVL": {"start_row": 3, "rows": [[...], ...]}, ...}}
+# Các lớp dưới đây giả lập đúng phần API openpyxl mà bộ đọc đang dùng (sheetnames, wb[name],
+# ws.iter_rows(min_row, max_row, max_col, values_only=True)) để logic đọc giữ nguyên 100%.
+# ---------------------------------------------------------------------------
+SHEET_SPECS: Dict[str, Dict[str, Any]] = {
+    # tên sheet: số cột cần đọc, cột khóa để xác định dòng trống (0-based), giới hạn dòng
+    "1. A1_NhiemVu": {"max_col": 3, "key_cols": [0], "max_row": 500},
+    "2. A2_CongViec": {"max_col": 9, "key_cols": [0]},
+    "3. B1_KhoiLuong": {"max_col": 19, "key_cols": [0, 1]},
+    "6. C1_VTVL": {"max_col": 12, "key_cols": [0]},
+    "8. C3_NhuCau": {"max_col": 15, "key_cols": [0]},
+    "9. D1_NhanLuc": {"max_col": 12, "key_cols": [0, 1]},
+    "10. D2_PhuongAn": {"max_col": 14, "key_cols": [0]},
+}
+MAX_PAYLOAD_ROWS_PER_SHEET = 60000
+
+
+class _JsonSheet:
+    def __init__(self, rows: List[List[Any]], start_row: int):
+        self._rows = rows
+        self._start = start_row
+
+    def iter_rows(self, min_row: int = 1, max_row: Optional[int] = None, max_col: Optional[int] = None,
+                  values_only: bool = True):
+        last = self._start + len(self._rows) - 1
+        end = last if max_row is None else min(max_row, last)
+        for idx in range(min_row, end + 1):
+            i = idx - self._start
+            row = list(self._rows[i]) if 0 <= i < len(self._rows) else []
+            if max_col is not None:
+                row = (row + [None] * max_col)[:max_col]
+            yield tuple(row)
+
+
+class _JsonWorkbook:
+    def __init__(self, payload: Dict[str, Any]):
+        sheets = payload.get("sheets")
+        if not isinstance(sheets, dict):
+            raise ValueError("Dữ liệu gửi lên không hợp lệ: thiếu 'sheets'.")
+        self._sheets: Dict[str, _JsonSheet] = {}
+        for name, s in sheets.items():
+            if name not in SHEET_SPECS or not isinstance(s, dict):
+                continue
+            rows = s.get("rows") or []
+            if not isinstance(rows, list) or len(rows) > MAX_PAYLOAD_ROWS_PER_SHEET:
+                raise ValueError(f"Dữ liệu sheet '{name}' không hợp lệ hoặc quá lớn.")
+            max_col = SHEET_SPECS[name]["max_col"]
+            clean = []
+            for r in rows:
+                if not isinstance(r, list):
+                    raise ValueError(f"Dữ liệu sheet '{name}' không hợp lệ.")
+                clean.append([v if isinstance(v, (str, int, float, bool)) or v is None else str(v) for v in r[:max_col]])
+            self._sheets[name] = _JsonSheet(clean, int(s.get("start_row") or 1))
+        names = payload.get("sheet_names")
+        self.sheetnames = [str(n) for n in names] if isinstance(names, list) else list(self._sheets.keys())
+        # Sheet có trong file nhưng không gửi kèm -> coi như rỗng
+        self.sheetnames = [n for n in self.sheetnames if n in self._sheets or n not in SHEET_SPECS]
+
+    def __getitem__(self, name: str) -> _JsonSheet:
+        return self._sheets[name]
+
+    def close(self) -> None:
+        pass
+
+
+def load_vtvl_workbook(file_path: str, sheets_payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Đọc toàn bộ dữ liệu cốt lõi phục vụ rà soát chuyên môn giờ làm việc và biên chế.
+    - file_path: đường dẫn file .xlsx; hoặc chỉ là tên file khi truyền sheets_payload.
+    - sheets_payload: dữ liệu sheet đã trích sẵn từ trình duyệt (xem SHEET_SPECS).
     """
     path = Path(file_path)
-    if not path.exists():
-        raise FileNotFoundError(f"Không tìm thấy file: {file_path}")
-
-    wb = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
+    if sheets_payload is not None:
+        wb = _JsonWorkbook(sheets_payload)
+    else:
+        if not path.exists():
+            raise FileNotFoundError(f"Không tìm thấy file: {file_path}")
+        wb = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
     sheet_names = wb.sheetnames
 
     # 1. Đọc C1_VTVL

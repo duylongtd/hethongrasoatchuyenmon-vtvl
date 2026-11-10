@@ -37,9 +37,14 @@ Phụ lục gốc nằm trong `data/qd2398/`. Khi có phụ lục mới:
 Vercel tự nhận `app` (FastAPI) trong `app.py` và cài `requirements.txt`.
 Trên Vercel: file chỉ ghi vào `/tmp/vtvl`; API theo đường dẫn chỉ đọc file đã tải lên (`ALLOW_LOCAL_PATHS=0`).
 
-> ⚠️ Vercel giới hạn **4,5 MB** cho thân request của Function. Bộ biểu 30.000 dòng thường 6–43 MB
-> nên tải trực tiếp lên `/api/audit-upload` sẽ bị từ chối (413) cho tới khi chuyển sang đọc file ngay trên trình duyệt
-> và chỉ gửi phần dữ liệu cần thiết.
+Vercel giới hạn **4,5 MB** cho mỗi request, trong khi bộ biểu 30.000 dòng nặng 6–43 MB. Vì vậy nút
+**"Chọn file (.xlsx)"** đọc file ngay trên trình duyệt (SheetJS), chỉ lấy các sheet/cột cần phân tích
+(A1, A2, B1, C1, C3, D1, D2), nén gzip rồi gửi tới `/api/audit-sheets` (thường 20–80 KB). Xuất báo cáo dùng
+`/api/export-excel-sheets` với cùng dữ liệu. File gốc không rời khỏi máy người dùng.
+
+- Quy tắc trích dữ liệu ở `templates/index.html` (`SHEET_SPECS`) phải khớp `core/excel_loader.py` (`SHEET_SPECS`).
+- Đã kiểm chứng: kết quả phân tích từ dữ liệu trích trên trình duyệt giống hệt đọc thẳng file `.xlsx`.
+- `/api/audit-upload` (gửi nguyên file) chỉ còn dùng khi chạy local.
 
 ## Bảo mật dữ liệu
 

@@ -6,6 +6,7 @@
   <title>Phần mềm Rà soát Chuyên môn Giờ làm việc & Bố trí Nhân sự VTVL</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <style>
     body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background-color: #f8fafc; color: #0f172a; }
     .main-tab-btn.active { border-bottom: 3px solid #1d4ed8; color: #1d4ed8; font-weight: 700; background-color: #eff6ff; }
@@ -356,37 +357,142 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Lỗi phân tích file');
         AUDIT_DATA = data;
+        LAST_PAYLOAD = null;
         renderDashboard();
       } catch (err) {
         alert('Không thể đọc file: ' + err.message);
       }
     }
 
+    // ------------------------------------------------------------------
+    // Đọc file Excel ngay trên trình duyệt, chỉ gửi các sheet/cột cần phân tích
+    // (file bộ biểu 6–43 MB vượt giới hạn 4,5 MB/request của Vercel).
+    // PHẢI khớp SHEET_SPECS trong core/excel_loader.py.
+    // ------------------------------------------------------------------
+    const SHEET_SPECS = {
+      '1. A1_NhiemVu':   { maxCol: 3,  keyCols: [0], maxRow: 500 },
+      '2. A2_CongViec':  { maxCol: 9,  keyCols: [0] },
+      '3. B1_KhoiLuong': { maxCol: 19, keyCols: [0, 1] },
+      '6. C1_VTVL':      { maxCol: 12, keyCols: [0] },
+      '8. C3_NhuCau':    { maxCol: 15, keyCols: [0] },
+      '9. D1_NhanLuc':   { maxCol: 12, keyCols: [0, 1] },
+      '10. D2_PhuongAn': { maxCol: 14, keyCols: [0] },
+    };
+    const START_ROW = 3;          // dữ liệu bắt đầu từ dòng 3 (dòng 1-2 là tiêu đề)
+    const MAX_EMPTY_STREAK = 50;  // giống bộ đọc phía server
+    let LAST_PAYLOAD = null;      // { blob, fileName } – dùng lại khi xuất báo cáo Excel
+
+    function setStatus(text) {
+      document.getElementById('currentFileLabel').textContent = text;
+    }
+
+    function isBlank(v) {
+      return v === null || v === undefined || String(v).trim() === '';
+    }
+
+    function extractSheetsFromWorkbook(wb, fileName) {
+      const sheets = {};
+      for (const [name, spec] of Object.entries(SHEET_SPECS)) {
+        const ws = wb.Sheets[name];
+        if (!ws || !ws['!ref']) continue;
+        const ref = XLSX.utils.decode_range(ws['!ref']);
+        let lastRow = ref.e.r;                                   // 0-based
+        if (spec.maxRow) lastRow = Math.min(lastRow, spec.maxRow - 1);
+        if (lastRow < START_ROW - 1) { sheets[name] = { start_row: START_ROW, rows: [] }; continue; }
+        const rows = XLSX.utils.sheet_to_json(ws, {
+          header: 1, raw: true, defval: null, blankrows: true,
+          range: { s: { r: START_ROW - 1, c: 0 }, e: { r: lastRow, c: spec.maxCol - 1 } },
+        });
+        // Cắt theo đúng quy tắc server: dừng khi > 50 dòng liên tiếp trống ở cột khóa
+        const out = [];
+        let streak = 0;
+        for (const r of rows) {
+          const empty = spec.keyCols.every(c => isBlank(r[c]));
+          if (empty) {
+            streak += 1;
+            if (streak > MAX_EMPTY_STREAK) break;
+          } else {
+            streak = 0;
+          }
+          out.push(r.slice(0, spec.maxCol).map(v => (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean' || v === null) ? v : String(v)));
+        }
+        while (out.length && spec.keyCols.every(c => isBlank(out[out.length - 1][c]))) out.pop();
+        sheets[name] = { start_row: START_ROW, rows: out };
+      }
+      return { file_name: fileName, sheet_names: wb.SheetNames, sheets };
+    }
+
+    async function gzipJson(obj) {
+      const json = JSON.stringify(obj);
+      if (typeof CompressionStream === 'undefined') {
+        return new Blob([json], { type: 'application/json' });
+      }
+      const stream = new Blob([json]).stream().pipeThrough(new CompressionStream('gzip'));
+      return await new Response(stream).blob();
+    }
+
+    async function readJsonOrText(res) {
+      const text = await res.text();
+      try { return JSON.parse(text); } catch (_) { return { detail: text.slice(0, 300) || res.statusText }; }
+    }
+
     async function uploadAndAnalyze(inputEl) {
       const file = inputEl.files[0];
       if (!file) return;
-      document.getElementById('currentFileLabel').textContent = 'Đang tải lên và phân tích: ' + file.name + ' ...';
       try {
+        if (typeof XLSX === 'undefined') throw new Error('Chưa tải được thư viện đọc Excel (SheetJS). Kiểm tra kết nối mạng rồi tải lại trang.');
+        setStatus('Đang đọc file trên trình duyệt: ' + file.name + ' ...');
+        await new Promise(r => setTimeout(r, 30)); // cho giao diện cập nhật trạng thái
         const buf = await file.arrayBuffer();
-        const res = await fetch('/api/audit-upload?filename=' + encodeURIComponent(file.name), {
+        const wb = XLSX.read(buf, { type: 'array', sheets: Object.keys(SHEET_SPECS), dense: true, cellStyles: false, cellHTML: false, cellFormula: false });
+        const payload = extractSheetsFromWorkbook(wb, file.name);
+        const blob = await gzipJson(payload);
+        if (blob.size > 4.3 * 1024 * 1024) {
+          throw new Error(`Dữ liệu sau khi trích vẫn lớn (${(blob.size / 1048576).toFixed(1)} MB), vượt giới hạn 4,5 MB của máy chủ.`);
+        }
+        setStatus(`Đang phân tích: ${file.name} (gửi ${(blob.size / 1024).toFixed(0)} KB thay vì ${(file.size / 1048576).toFixed(1)} MB) ...`);
+        const res = await fetch('/api/audit-sheets', {
           method: 'POST',
           headers: { 'Content-Type': 'application/octet-stream' },
-          body: buf
+          body: blob,
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Lỗi tải file');
+        const data = await readJsonOrText(res);
+        if (!res.ok) throw new Error(data.detail || 'Lỗi phân tích file');
         AUDIT_DATA = data;
-        document.getElementById('filePathInput').value = data.file_path;
+        LAST_PAYLOAD = { blob, fileName: file.name };
+        document.getElementById('filePathInput').value = '';
         renderDashboard();
       } catch (err) {
-        alert('Lỗi tải file: ' + err.message);
+        setStatus('Không phân tích được file: ' + file.name);
+        alert('Lỗi đọc/phân tích file: ' + err.message);
       } finally {
         inputEl.value = '';  // cho phép chọn lại cùng một file
       }
     }
 
-    function downloadExcelReport() {
+    async function downloadExcelReport() {
       const pathVal = document.getElementById('filePathInput').value.trim();
+      if (!pathVal && LAST_PAYLOAD) {
+        try {
+          const res = await fetch('/api/export-excel-sheets', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/octet-stream' },
+            body: LAST_PAYLOAD.blob,
+          });
+          if (!res.ok) throw new Error((await readJsonOrText(res)).detail || 'Lỗi xuất báo cáo');
+          const out = await res.blob();
+          const stem = LAST_PAYLOAD.fileName.replace(/\.[^.]+$/, '');
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(out);
+          a.download = `Bao_cao_Ra_soat_Chuyen_mon_Gio_VTVL_${stem}.xlsx`;
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+        } catch (err) {
+          alert('Lỗi xuất báo cáo: ' + err.message);
+        }
+        return;
+      }
       if (!pathVal) {
         alert('Chưa có file nào được phân tích. Hãy chọn file (.xlsx) trước khi xuất báo cáo.');
         return;

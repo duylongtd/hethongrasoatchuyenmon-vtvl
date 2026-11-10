@@ -3,7 +3,7 @@
 Pipeline tổng hợp kết quả rà soát chuyên môn VTVL (Giờ làm việc, Thêm/Bớt người, Cân đối giữa các Ban, Đối chiếu biên chế giao theo QĐ 2398/QĐ-UBND).
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from .excel_loader import load_vtvl_workbook
 from .analyzer_hours import analyze_hours_anomalies
 from .analyzer_headcount import analyze_headcount_proposals
@@ -11,8 +11,8 @@ from .analyzer_department import analyze_department_balance
 from .qd2398_data import lookup_qd2398_by_unit
 
 
-def run_full_audit(file_path: str) -> Dict[str, Any]:
-    raw_data = load_vtvl_workbook(file_path)
+def run_full_audit(file_path: str, sheets_payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    raw_data = load_vtvl_workbook(file_path, sheets_payload)
     hours_res = analyze_hours_anomalies(raw_data)
     headcount_res = analyze_headcount_proposals(raw_data)
     dept_res = analyze_department_balance(raw_data)
